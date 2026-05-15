@@ -95,13 +95,13 @@ clean:
 	rm -f loader*
 
 rom: loader
-	$(OBJCOPY) -O binary --gap-fill 0xff --pad-to 0xfc0 loader loader.rom
+	$(OBJCOPY) -O binary loader loader.rom
 
 srec: loader
 	$(OBJCOPY) -O srec loader loader.srec
 
 xc: loader
-	$(OBJCOPY) -O binary loader Loader.xc
+	$(OBJCOPY) -O binary --gap-fill 0xff --pad-to 0xfc0 loader Loader.xc
 
 dump: loader
 	$(OBJDUMP) -mm68k:$(CPU) -belf32-m68k -dt -j.text loader

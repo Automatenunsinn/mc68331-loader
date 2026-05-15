@@ -1,0 +1,22 @@
+name: Build
+on:
+  [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/stoneddiscord/m68k_bare_metal:master
+    strategy:
+      matrix:
+        version: [TEST]
+    steps:
+    - uses: actions/checkout@v6
+    - name: Build
+      run: |
+        make crt
+        make VERSION=${{ matrix.version }} xc
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: Loader-${{ matrix.version }}
+        path: Loader.xc
