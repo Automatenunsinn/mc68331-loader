@@ -121,16 +121,16 @@ int main(void)
     SCCR0 = 0x09;
     SCCR1 = 0x2c;
 
-    (*(volatile uint16_t *)(0xFFF900)) = 0x80;
-    (*(volatile uint16_t *)(0xFFF904)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF914)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF916)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF918)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF91a)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF91c)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF908)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF91e)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF906)) = 0x7000;
+    GPTMCR = 0x80;
+    ICR = 0x00;
+    TOC1 = 0xFFFF;
+    TOC2 = 0xFFFF;
+    TOC3 = 0xFFFF;
+    TOC4 = 0xFFFF;
+    TI4_O5 = 0xFFFF;
+    OC1 = 0x00;
+    TCTL = 0x00;
+    GP = 0x7000;
 
     main_task();
 
