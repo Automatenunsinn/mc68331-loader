@@ -861,24 +861,24 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
     SCCR0 = 0x09;
     SCCR1 = 0x2c;
 
-    (*(volatile uint16_t *)(0xFFF900)) = 0x80;
-    (*(volatile uint16_t *)(0xFFF904)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF914)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF916)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF918)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF91a)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF91c)) = 0xFFFF;
-    (*(volatile uint16_t *)(0xFFF908)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF91e)) = 0x00;
+    GPTMCR = 0x80;
+    ICR = 0x00;
+    TOC1 = 0xFFFF;
+    TOC2 = 0xFFFF;
+    TOC3 = 0xFFFF;
+    TOC4 = 0xFFFF;
+    TI4_O5 = 0xFFFF;
+    OC1 = 0x00;
+    TCTL = 0x00;
 #ifdef EXTRA_FFF9_REGS
     // 30ALT/ROTE/UHG additionally clear these timer/port registers.
-    (*(volatile uint16_t *)(0xFFF90c)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF924)) = 0x00;
-    (*(volatile uint16_t *)(0xFFF926)) = 0x00;
+    PAC = 0x00;
+    CFORC_PWMC = 0x00;
+    PWM = 0x00;
 #endif
-    (*(volatile uint16_t *)(0xFFF906)) = 0x7000;
+    GP = 0x7000;
 #ifdef EXTRA_FFF9_REGS
-    (*(volatile uint16_t *)(0xFFF920)) = 0x00;
+    TMSK = 0x00;
 #endif
 
     main_task();
