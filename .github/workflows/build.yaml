@@ -1,6 +1,6 @@
 name: Build
 on:
-  [push, pull_request]
+  [push, pull_request, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -8,7 +8,7 @@ jobs:
       image: ghcr.io/stoneddiscord/m68k_bare_metal:master
     strategy:
       matrix:
-        version: [TEST]
+        version: [50B_1MB, 50B_2MB, 50A, 30ALT, TEST]
     steps:
     - uses: actions/checkout@v6
     - name: Build
