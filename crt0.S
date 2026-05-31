@@ -4,6 +4,8 @@
         .extern _bss_start
         .extern _bss_end
         .extern main
+        .extern rc4_ksa
+        .extern rc4_crypt_byte
 
         .section .text
         .align 2
@@ -27,11 +29,11 @@ _start:
         
         /* Ensure function pointers are at 0x450 (0x400 + 0x50) */
         .org 0x50
-        .globl main1_ptr
-        .globl main2_ptr
-main1_ptr:
-        .long main
-main2_ptr:
-        .long main
+        .globl process_encrypted_byte_ptr
+        .globl initialize_encryption_table_ptr
+process_encrypted_byte_ptr:
+        .long rc4_crypt_byte
+initialize_encryption_table_ptr:
+        .long rc4_ksa
 
         .end
