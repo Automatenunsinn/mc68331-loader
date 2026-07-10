@@ -137,7 +137,7 @@ void swap_bytes(uint8_t *param1, uint8_t *param2)
 
 void send_byte_to_host(uint8_t data)
 {
-    while ((SCSR & 0x0100) == 0)
+    while ((SCSR & SCSR_TDRE) == 0)
         ;
     SCDR = data;
 }
@@ -163,7 +163,7 @@ void control_led_and_send(uint8_t value)
 
         if (toggle)
         {
-            if (SCSR & 0x0100)
+            if (SCSR & SCSR_TDRE)
                 SCDR = 0xff;
             OPR_SET = 0x60;
         }
@@ -181,7 +181,7 @@ uint8_t get_char_with_timeout(uint8_t source, uint32_t *timeout_counter)
     {
         if (source == 3) // QSM
         {
-            if (SCSR & 0x40)
+            if (SCSR & SCSR_RDRF)
                 return SCDR;
         }
         else // DUART
@@ -312,7 +312,7 @@ void process_communication(void)
         // Wait for trigger byte from either port
         while (1)
         {
-            if (SCSR & 0x40)
+            if (SCSR & SCSR_RDRF)
             {
                 c = SCDR;
                 source = 3;
@@ -355,7 +355,7 @@ void process_communication(void)
             {
                 if (source == 3)
                 {
-                    if (SCSR & 0x40) { c = SCDR; break; }
+                    if (SCSR & SCSR_RDRF) { c = SCDR; break; }
                 }
                 else
                 {
@@ -445,12 +445,12 @@ void process_communication(void)
     {
         while (plain_dest < (uint8_t *)0x1100)
         {
-            uint8_t scsr_val;
+            uint16_t scsr_val;
             timeout = 0;
             while (1)
             {
-                scsr_val = (uint8_t)SCSR;
-                if (scsr_val & 0x40) break;
+                scsr_val = SCSR;
+                if (scsr_val & SCSR_RDRF) break;
                 if (++timeout > 0xf4240)
                 {
                     reset_and_wait(1);
@@ -459,7 +459,7 @@ void process_communication(void)
             }
             c = SCDR;
             *plain_dest++ = c;
-            if ((scsr_val & 0x0f) != 0)
+            if ((scsr_val & SCSR_RX_ERROR) != 0)
             {
                 reset_and_wait(1);
                 return;
@@ -511,12 +511,12 @@ void process_communication(void)
         while (app_dest < (uint8_t *)(*(volatile uint32_t *)0x1004) &&
                app_dest < (uint8_t *)0x400000) // 0x400000 safety bound
         {
-            uint8_t scsr_val;
+            uint16_t scsr_val;
             timeout = 0;
             while (1)
             {
-                scsr_val = (uint8_t)SCSR;
-                if (scsr_val & 0x40) break;
+                scsr_val = SCSR;
+                if (scsr_val & SCSR_RDRF) break;
                 if (++timeout > 0xf4240)
                 {
                     reset_and_wait(1);
@@ -526,7 +526,7 @@ void process_communication(void)
             c = SCDR;
             *app_dest++ = rc4_crypt_byte(c, rc4_state, &i_idx, &j_idx);
 
-            if ((scsr_val & 0x0f) != 0)
+            if ((scsr_val & SCSR_RX_ERROR) != 0)
             {
                 reset_and_wait(1);
                 return;
@@ -562,7 +562,7 @@ void reset_and_wait(uint32_t led_pattern)
     uint32_t count = 0;
     while (count < 0x186a0)
     {
-        if (SCSR & 0x40)
+        if (SCSR & SCSR_RDRF)
         {
             (void)SCDR;
             count = 0;

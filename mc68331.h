@@ -72,6 +72,17 @@
 #define SCCR1 (* (volatile uint16_t *) (0xFFFC0A) )
 #define SCSR  (* (volatile uint16_t *) (0xFFFC0C) )
 
+#define SCSR_TDRE   0b0000000100000000
+#define SCSR_TC     0b0000000010000000
+#define SCSR_RDRF   0b0000000001000000
+#define SCSR_RAF    0b0000000000100000
+#define SCSR_IDLE   0b0000000000010000
+#define SCSR_OR     0b0000000000001000
+#define SCSR_NF     0b0000000000000100
+#define SCSR_FE     0b0000000000000010
+#define SCSR_PF     0b0000000000000001
+#define SCSR_RX_ERROR (SCSR_OR | SCSR_NF | SCSR_FE | SCSR_PF)
+
 #define SCDR  (* (volatile char *) (0xFFFC0F) )
 
 #define PORTQS (* (volatile uint16_t *) (0xFFFC14) )
@@ -89,4 +100,3 @@
 #define CR5 (* (volatile uint16_t *) (0xFFFD4A) )
 #define CR6 (* (volatile uint16_t *) (0xFFFD4C) )
 #define CR7 (* (volatile uint16_t *) (0xFFFD4E) )
-
