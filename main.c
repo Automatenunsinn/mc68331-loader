@@ -10,9 +10,9 @@
 //   5.0a      none           (none)
 //   5.0b 1MB  0xeada1274     ^ ~i ^ (i<<2)
 //   5.0b 2MB  0x2378bf41     ^  i ^ (i<<2)
-//   30ALT     0xcac0facc     ^ ~i ^ (i<<1)
-//   UHG       (uses ENC_TABLE only — no NVRAM, no USP)
-//   ROTE      none           (none)
+//   ALT_1MB   0xcac0facc     ^ ~i ^ (i<<1)
+//   UHG_1MB   (uses ENC_TABLE only — no NVRAM, no USP)
+//   ROTE_512KB none          (none)
 #if defined(VERSION_50B_1MB)
 #include "table_rd.h"
 #define HEADER_MAGIC 0x61640300 //ad
@@ -29,11 +29,11 @@
 #define KSA_USP_SCRAMBLE 0x2378bf41u
 #define KSA_MIX_I        1
 #define KSA_MIX_I_SHIFT  2
-#elif defined(VERSION_50A)
+#elif defined(VERSION_50A_1MB)
 #include "table_rd.h"
 #define HEADER_MAGIC 0x31415900 //1AY
 #define HAS_RC4_NMIX    1
-#elif defined(VERSION_30ALT)
+#elif defined(VERSION_ALT_1MB)
 #include "table_rd.h"
 #define HEADER_MAGIC 0x61647000 //adp
 #define HAS_RC4_NMIX    1
@@ -44,14 +44,14 @@
 #define STACK_DETECT_100C 1   // size stack from magic long at NVRAM 0x100c
 #define CS7_UNCONDITIONAL 1   // CSBAR7/CSOR7 always written (no 0x200000 gate)
 #define EXTRA_FFF9_REGS   1   // also clear fff90c/920/924/926
-#elif defined(VERSION_UHG)
+#elif defined(VERSION_UHG_1MB)
 #include "table_old.h"
 #define HEADER_MAGIC 0x53746c00 //Stl
 #define OLD_FAMILY      1  // no RC4+NMIX crypt, no process_header
 #define UHG_KSA         1  // classic RC4 KSA keyed by static ENC_TABLE (mod 64)
 #define CS7_UNCONDITIONAL 1
 #define EXTRA_FFF9_REGS   1
-#elif defined(VERSION_ROTE)
+#elif defined(VERSION_ROTE_512KB)
 #include "table_old.h"
 #define HEADER_MAGIC 0x31415900 //1AY
 #define OLD_FAMILY      1  // no RC4+NMIX crypt, no process_header
@@ -202,7 +202,7 @@ void rc4_ksa(uint8_t *state, uint8_t *key_table, uint8_t *i_ptr, uint8_t *j_ptr)
     *i_ptr = *j_ptr;
 
 #if defined(UHG_KSA)
-    // VERSION_UHG: no NVRAM, no USP. Classic RC4 KSA keyed solely by the
+    // VERSION_UHG_1MB: no NVRAM, no USP. Classic RC4 KSA keyed solely by the
     // 64-byte static ENC_TABLE (from table_old.h), cycled mod 64. The
     // second arg is unused in this variant.
     (void)key_table;
@@ -295,6 +295,8 @@ void process_communication(void)
     uint8_t key_table[256];
     uint8_t i_idx = 0;
     uint8_t j_idx = 0;
+
+wait_for_command:
 
     // -------------------------------------------------------------------------
     // Phase 1: Wait for magic trigger byte and verify magic sequence.
@@ -394,9 +396,8 @@ void process_communication(void)
     // Phase 2: Receive 8-byte header, verify checksum, conditionally call
     //          process_header.
     //
-    // The OR of all 8 header bytes is tested: if zero (all-zero header),
-    // process_header is skipped entirely. This matches the original's
-    //   tst.b (or_flag, A6) / beq LAB_000008ec
+    // The OR of all 8 header bytes distinguishes an all-zero upload header
+    // from the host's non-zero date-setting header.
     // -------------------------------------------------------------------------
     uint8_t header[8];
     uint8_t checksum = 0;
@@ -423,13 +424,23 @@ void process_communication(void)
     }
 
 #ifndef OLD_FAMILY
-    // only call process_header if at least one header byte is non-zero
+    // A non-zero header is the host's standalone date-setting command.  It
+    // does not have an NVRAM/application payload; acknowledge it and wait for
+    // the next command.  An all-zero header selects the upload path below.
     if (header_or)
     {
         process_header(header);
+        control_led_and_send(4);
+        goto wait_for_command;
     }
 #else
-    (void)header_or;
+    // Old-family targets do not clock out the date header, but must not mistake
+    // a standalone date transaction for the start of an upload either.
+    if (header_or)
+    {
+        control_led_and_send(4);
+        goto wait_for_command;
+    }
 #endif
 
     // -------------------------------------------------------------------------
@@ -494,8 +505,8 @@ void process_communication(void)
     // Phase 4: Set up RC4, then receive and decrypt the application image
     //          into memory starting at 0x1100.
     // -------------------------------------------------------------------------
-    SYNCR = 0xa205; // matches SYNCR write at 0x984 in original
-    SCCR0 = 0x05;
+    SYNCR = 0xa205; // 32.768 kHz crystal -> 18.350080 MHz system clock; matches original write at 0x984
+    SCCR0 = 0x05;   // SCBR = 5 -> 18.350080 MHz / (32 * 5) = 115200 (114688) baud
 
     rc4_ksa(rc4_state, key_table, &i_idx, &j_idx);
 
@@ -609,7 +620,7 @@ uint8_t verify_checksum(void)
         return 0;
 
 #ifdef HAS_EXTRA_SIG_SCAN
-    // VERSION_30ALT: completely different post-check_magic validation.
+    // VERSION_ALT_1MB: completely different post-check_magic validation.
     // It reads a pointer from NVRAM[0x1058] into the just-loaded app, scans
     // forward (word-wise) for the marker 0x4afa4afa (double BGND), summing
     // the words until found or up to 0x186a0 iterations. Then adds a fixed
@@ -719,8 +730,8 @@ void main_task(void)
 
     process_communication();
 
-    SYNCR = 0x7f05;
-    SCCR0 = 0x09;
+    SYNCR = 0x7f05; // 32.768 kHz crystal -> 16.777216 MHz system clock
+    SCCR0 = 0x09;   // SCBR = 9 -> 16.777216 MHz / (32 * 9) = 57600 (58254.22) baud
 
     if (verify_checksum())
     {
@@ -734,7 +745,7 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
 {
     SIMCR = 0x40c5;
     SYPCR = 0x4c;
-    SYNCR = 0x7f05;
+    SYNCR = 0x7f05; // 32.768 kHz crystal -> 16.777216 MHz system clock
     CSORBT = 0x6c70;
 
     __asm__ volatile("movea.l %%d3, %%a0; move %%a0, %%usp" : : : "a0", "memory");
@@ -749,11 +760,11 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
     uint32_t d0_val = stack_from_0;
 
 #if defined(OLD_FAMILY)
-    // ROTE/UHG: no NVRAM-based stack sizing; reserve a small guard below the
-    // top of RAM and use that as the stack.
+    // ROTE_512KB/UHG_1MB: no NVRAM-based stack sizing; reserve a small guard below
+    // the top of RAM and use that as the stack.
     d0_val -= 0x40;
 #elif defined(STACK_DETECT_100C)
-    // 30ALT: a recognized image magic at NVRAM 0x100c forces a fixed 0x80000
+    // ALT_1MB: a recognized image magic at NVRAM 0x100c forces a fixed 0x80000
     // stack window; otherwise fall back to the top-of-RAM value at 0x0000.
     uint32_t magic_100c = *(volatile uint32_t *)0x100c;
     if (magic_100c == 0x31415926 || magic_100c == 0x61647001)
@@ -774,7 +785,7 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
     __asm__ volatile("movea.l %0, %%sp" : : "d"(d0_val) : "memory");
 
 #ifndef OLD_FAMILY
-    // ROTE/UHG always program the chip selects; the 5.0/30ALT families skip
+    // ROTE_512KB/UHG_1MB always program the chip selects; the 5.0/ALT_1MB families skip
     // them when vector 4 reads back as all-ones (uninitialized boot ROM).
     if (vector_4 != 0xFFFFFFFF)
 #endif
@@ -858,7 +869,7 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
     SPCR1 = 0x0404;
     SPCR2 = 0x00;
     SPCR3 = 0x00;
-    SCCR0 = 0x09;
+    SCCR0 = 0x09; // SCBR = 9 -> 16.777216 MHz / (32 * 9) = 57600 (58254.22) baud
     SCCR1 = 0x2c;
 
     GPTMCR = 0x80;
@@ -871,7 +882,7 @@ __attribute__((optimize("omit-frame-pointer"))) int main(void)
     OC1 = 0x00;
     TCTL = 0x00;
 #ifdef EXTRA_FFF9_REGS
-    // 30ALT/ROTE/UHG additionally clear these timer/port registers.
+    // ALT_1MB/ROTE_512KB/UHG_1MB additionally clear these timer/port registers.
     PAC = 0x00;
     CFORC_PWMC = 0x00;
     PWM = 0x00;

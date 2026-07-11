@@ -50,6 +50,20 @@ ifneq ($(wildcard ../m68k_bare_metal/include/.*),)
 endif
 endif
 
+# Which variant to build. Override on the command line:
+#   make VERSION=50B_1MB rom
+#   make VERSION=50B_2MB rom
+#   make VERSION=50A_1MB rom
+#   make VERSION=ALT_1MB rom
+#   make VERSION=UHG_1MB rom
+#   make VERSION=ROTE_512KB rom
+VERSION?=50B_1MB
+
+# Supervisor checksum variant. Defaults from the loader version where possible.
+SUPERVISOR_VARIANT?=$(if $(filter ROTE_512KB,$(VERSION)),512KB,$(if $(findstring 2MB,$(VERSION)),2MB,$(if $(findstring 1MB,$(VERSION)),1MB,1MB)))
+
+TEST_PORT?=/dev/ttyUSB0
+
 CFLAGS=-m$(CPU) -Wall -g -static -I${m68kbm_PATH}/include -I. -msoft-float -MMD -MP -Os -fno-omit-frame-pointer -falign-functions=4 -falign-jumps=4 -falign-loops=4 -DVERSION_$(VERSION)
 LFLAGS=--script=pcrel_application.ld -L${m68kbm_PATH}/libmetal -lmetal-$(CPU)
 
@@ -58,7 +72,7 @@ OBJS:=$(patsubst %.S,$(BUILDDIR)/%.S.o,$(OBJS))
 OBJS:=$(patsubst %.s,$(BUILDDIR)/%.s.o,$(OBJS))
 DEPS=$(OBJS:.o=.d)
 
-.PHONY: loader release all crt clean rom srec dump dumps hexdump
+.PHONY: loader release all crt clean rom srec xc test dump dumps hexdump
 
 loader: crt $(OBJS)
 	$(LD) -o $@ $(OBJS) $(LFLAGS)
@@ -102,6 +116,10 @@ srec: loader
 
 xc: loader
 	$(OBJCOPY) -O binary --gap-fill 0xff --pad-to 0xfc0 loader Loader.xc
+	python3 checksum.py Loader.xc $(SUPERVISOR_VARIANT)
+
+test: xc
+	python3 upload.py --port $(TEST_PORT) Loader.xc
 
 dump: loader
 	$(OBJDUMP) -mm68k:$(CPU) -belf32-m68k -dt -j.text loader
