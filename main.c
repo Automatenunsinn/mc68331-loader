@@ -15,6 +15,7 @@
 //   ROTE_512KB none          (none)
 #if defined(VERSION_50B_1MB)
 #include "table_rd.h"
+#define BOARD_RAM_SIZE 0x100000u
 #define HEADER_MAGIC 0x61640300 //ad
 #define HAS_WARM_BOOT   1
 #define HAS_RC4_NMIX    1
@@ -23,6 +24,7 @@
 #define KSA_MIX_I_SHIFT  2
 #elif defined(VERSION_50B_2MB)
 #include "table_rd.h"
+#define BOARD_RAM_SIZE 0x200000u
 #define HEADER_MAGIC 0x61640400 //ad
 #define HAS_WARM_BOOT   1
 #define HAS_RC4_NMIX    1
@@ -31,10 +33,12 @@
 #define KSA_MIX_I_SHIFT  2
 #elif defined(VERSION_50A_1MB)
 #include "table_rd.h"
+#define BOARD_RAM_SIZE 0x100000u
 #define HEADER_MAGIC 0x31415900 //1AY
 #define HAS_RC4_NMIX    1
 #elif defined(VERSION_ALT_1MB)
 #include "table_rd.h"
+#define BOARD_RAM_SIZE 0x100000u
 #define HEADER_MAGIC 0x61647000 //adp
 #define HAS_RC4_NMIX    1
 #define HAS_EXTRA_SIG_SCAN 1  // scans for 0x4afa4afa marker at NVRAM[0x58]
@@ -46,6 +50,7 @@
 #define EXTRA_FFF9_REGS   1   // also clear fff90c/920/924/926
 #elif defined(VERSION_UHG_1MB)
 #include "table_old.h"
+#define BOARD_RAM_SIZE 0x100000u
 #define HEADER_MAGIC 0x53746c00 //Stl
 #define OLD_FAMILY      1  // no RC4+NMIX crypt, no process_header
 #define UHG_KSA         1  // classic RC4 KSA keyed by static ENC_TABLE (mod 64)
@@ -53,17 +58,23 @@
 #define EXTRA_FFF9_REGS   1
 #elif defined(VERSION_ROTE_512KB)
 #include "table_old.h"
+#define BOARD_RAM_SIZE 0x80000u
 #define HEADER_MAGIC 0x31415900 //1AY
 #define OLD_FAMILY      1  // no RC4+NMIX crypt, no process_header
 #define CS7_UNCONDITIONAL 1
 #define EXTRA_FFF9_REGS   1
 #else
 #include "table_zero.h" // Default if none specified
+#define BOARD_RAM_SIZE 0x80000u
 #define HEADER_MAGIC 0x4e4f4e45 //NONE
 #endif
 
-const uint8_t MAGIC1[] = {'R', 'X', 'M', 'B', 'R', 'X', 'M', 'B', 'V', 0x40, 'H', 'S', 'F', 'N', 0x09};
-const uint8_t MAGIC2[] = {'j', 'h', 'k', 'k', 0xfc, 0xc3, 0x54, 0x1a, 'R', 'X', 'M', 'B', 'R', 'X', 'M', 'B', 'V', 0x40, 'H', 'S', 'F', 'N', 0x09};
+#define NVRAM_BASE       0x1000u
+#define APP_START        0x1100u
+#define APP_LIMIT        0x400000u
+
+static const uint8_t MAGIC1[] = {'R', 'X', 'M', 'B', 'R', 'X', 'M', 'B', 'V', 0x40, 'H', 'S', 'F', 'N', 0x09};
+static const uint8_t MAGIC2[] = {'j', 'h', 'k', 'k', 0xfc, 0xc3, 0x54};
 
 // Prototypes
 void putchar_(char c);
@@ -76,6 +87,24 @@ void process_header(uint8_t *header);
 bool check_magic(void);
 uint8_t verify_checksum(void);
 void reset_and_wait(uint32_t led_pattern);
+__attribute__((noreturn)) void clear_ram_and_restart(void);
+
+__attribute__((optimize("omit-frame-pointer"), noreturn))
+void clear_ram_and_restart(void)
+{
+    volatile uint32_t *ram = (volatile uint32_t *)0x10000;
+    volatile uint32_t *ram_end = (volatile uint32_t *)(BOARD_RAM_SIZE - 0x10);
+
+    while (ram <= ram_end)
+        *ram++ = 0;
+
+    *(volatile uint32_t *)0x1000 = 0;
+    *(volatile uint32_t *)0xfffd00 = 0x494e4954; // "INIT"
+
+    ((void (*)(void))0x408)();
+    while (1)
+        ;
+}
 
 // RC4 functions
 void rc4_ksa(uint8_t *state, uint8_t *key_table, uint8_t *i_ptr, uint8_t *j_ptr);
@@ -141,6 +170,32 @@ void send_byte_to_host(uint8_t data)
         ;
     SCDR = data;
 }
+
+#ifdef SERIAL_DEBUG
+static void debug_send_byte(uint8_t source, uint8_t data)
+{
+    if (source == 3)
+    {
+        while ((SCSR & SCSR_TDRE) == 0)
+            ;
+        SCDR = data;
+    }
+    else
+    {
+        while ((SRA & TxRDY) == 0)
+            ;
+        TBRA = data;
+    }
+}
+
+// Single-byte stage marker returned over the active command port.
+static void debug_event(uint8_t source, uint8_t stage)
+{
+    debug_send_byte(source, stage);
+}
+#else
+#define debug_event(source, stage) ((void)0)
+#endif
 
 void control_led_and_send(uint8_t value)
 {
@@ -296,15 +351,11 @@ void process_communication(void)
     uint8_t i_idx = 0;
     uint8_t j_idx = 0;
 
-wait_for_command:
-
     // -------------------------------------------------------------------------
     // Phase 1: Wait for magic trigger byte and verify magic sequence.
     //
     // The tables store (expected_protocol_byte - 1). The original comparison is:
     //   received == table[k] + 1
-    // Both MAGIC1 and MAGIC2 sequences are 15 bytes long (D6 counts 1..15).
-    //
     // MAGIC2 contains a trap: if bytes 0-6 all match, the loader treats this as
     // a hostile probe, clears ROM address 0x400, calls reset_and_wait(1), then
     // loops forever. MAGIC2 can therefore never complete successfully.
@@ -329,16 +380,19 @@ wait_for_command:
         }
 
         const uint8_t *magic;
+        uint8_t magic_length;
         bool magic_is_type2;
 
         if (c == 0x1b)
         {
             magic = MAGIC1;
+            magic_length = sizeof(MAGIC1);
             magic_is_type2 = false;
         }
         else if (c == 0x7c)
         {
             magic = MAGIC2;
+            magic_length = sizeof(MAGIC2);
             magic_is_type2 = true;
         }
         else
@@ -346,9 +400,9 @@ wait_for_command:
             continue; // restart
         }
 
-        // Compare 15 follow-on bytes. Each expected received byte = magic[k] + 1.
+        // Each expected received byte is stored as magic[k] + 1.
         bool match = true;
-        for (int k = 0; k < 15; k++)
+        for (uint8_t k = 0; k < magic_length; k++)
         {
             // Receive next byte with inline timeout (original uses inline D5 counter,
             // resetting to 0 on timeout and retrying the same position).
@@ -373,23 +427,33 @@ wait_for_command:
             // FIX: comparison uses +1 to match table encoding
             if (c != (uint8_t)(magic[k] + 1))
             {
+                debug_event(source, 'X');
+#ifdef SERIAL_DEBUG
+                debug_send_byte(source, k);
+                debug_send_byte(source, c);
+                debug_send_byte(source, (uint8_t)(magic[k] + 1));
+#endif
                 match = false;
                 break;
             }
 
             // FIX: MAGIC2 trap — after 7 successful bytes, signal error and
             // loop forever. MAGIC2 can never proceed to header reading.
-            if (magic_is_type2 && k == 6)
+            if (magic_is_type2 && k == magic_length - 1)
             {
                 *(volatile uint32_t *)0x400 = 0;
-                reset_and_wait(1);
+                control_led_and_send(1);
+                ((void (*)(void))0xfc0)();
                 while (1)
                     ;
             }
         }
 
         if (match)
+        {
+            debug_event(source, 'M');
             break;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -409,6 +473,7 @@ wait_for_command:
         header[k] = get_char_with_timeout(source, &timeout);
         if (timeout)
         {
+            debug_event(source, 't');
             reset_and_wait(1);
             return;
         }
@@ -419,28 +484,21 @@ wait_for_command:
 
     if (checksum != header[7])
     {
+        debug_event(source, 'C');
         reset_and_wait(1);
         return;
     }
 
+
+    debug_event(source, 'H');
+
 #ifndef OLD_FAMILY
-    // A non-zero header is the host's standalone date-setting command.  It
-    // does not have an NVRAM/application payload; acknowledge it and wait for
-    // the next command.  An all-zero header selects the upload path below.
+    // The original clocks non-zero command headers out through the control
+    // port, then continues with the common NVRAM/application receive path.
     if (header_or)
-    {
         process_header(header);
-        control_led_and_send(4);
-        goto wait_for_command;
-    }
 #else
-    // Old-family targets do not clock out the date header, but must not mistake
-    // a standalone date transaction for the start of an upload either.
-    if (header_or)
-    {
-        control_led_and_send(4);
-        goto wait_for_command;
-    }
+    (void)header_or;
 #endif
 
     // -------------------------------------------------------------------------
@@ -497,9 +555,12 @@ wait_for_command:
     // Validate the NVRAM block we just received
     if (!check_magic())
     {
+        debug_event(source, 'N');
         reset_and_wait(1);
         return;
     }
+
+    debug_event(source, 'n');
 
     // -------------------------------------------------------------------------
     // Phase 4: Set up RC4, then receive and decrypt the application image
@@ -594,21 +655,25 @@ void reset_and_wait(uint32_t led_pattern)
 bool check_magic(void)
 {
     uint32_t stack_base;
+    uint32_t app_end = *(volatile uint32_t *)0x1004;
+    uint32_t app_entry = *(volatile uint32_t *)0x104c;
     __asm__ volatile ("move.l 0, %0" : "=d"(stack_base));
 
-    if (~(*(volatile uint32_t *)0x1008) != *(volatile uint32_t *)0x1004)
+    if (~(*(volatile uint32_t *)0x1008) != app_end)
         return false;
-    if (~(*(volatile uint32_t *)0x1050) != *(volatile uint32_t *)0x104c)
+    if (~(*(volatile uint32_t *)0x1050) != app_entry)
         return false;
 
-    if (stack_base <= *(volatile uint32_t *)0x1004)
+    if (app_end < APP_START || app_end >= APP_LIMIT || stack_base <= app_end)
         return false;
     if (stack_base <= *(volatile uint32_t *)0x1010)
         return false;
     if (stack_base <= *(volatile uint32_t *)0x1014)
         return false;
+    if (app_entry < APP_START || app_entry >= app_end)
+        return false;
 
-    if ((*(volatile uint32_t *)0x100c & 0xffffff00) != HEADER_MAGIC)
+    if (*(volatile uint32_t *)0x100c != HEADER_MAGIC)
         return false;
 
     return true;
@@ -651,11 +716,8 @@ uint8_t verify_checksum(void)
     uint32_t expected = *(volatile uint32_t *)(end - 3);
     return (sum == expected) ? 1 : 0;
 #else
-    uint8_t *start = (uint8_t *)0x1000;
+    uint8_t *start = (uint8_t *)NVRAM_BASE;
     uint8_t *end = (uint8_t *)(*(volatile uint32_t *)0x1004);
-
-    if ((uint32_t)end > 0x400000)
-        return 0;
 
     uint32_t sum = 0;
     for (uint8_t *p = start + 4; p <= end; p++)
