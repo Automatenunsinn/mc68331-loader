@@ -13,6 +13,26 @@ VARIANTS = {
     "4MB": (0x00400000, 0xFFA2, 0xF7CC),
 }
 
+# Final checksum words from the matching original ADP loaders.  Keep these
+# loader-specific values intact and compensate in the preceding checksum slots.
+ORIGINAL_CHECKSUMS = {
+    "50B_1MB": 0x5676,   # 61640302_5.0b.bin
+    "50B_2MB": 0x5400,   # 61640403_5.0b_2MB.bin
+    "50A_1MB": 0xB05D,   # 314159XX_5.0a.bin
+    "ALT_1MB": 0x1464,   # 616470XX_5.0a.bin
+    "UHG_1MB": 0x5743,   # 53746CXX_Ls3.0.bin
+    "ROTE_512KB": 0xADF4, # 314159XX_3.0.bin
+}
+
+VERSION_VARIANTS = {
+    "50B_1MB": "1MB",
+    "50B_2MB": "2MB",
+    "50A_1MB": "1MB",
+    "ALT_1MB": "1MB",
+    "UHG_1MB": "1MB",
+    "ROTE_512KB": "512KB",
+}
+
 # Alternating 16-bit sums of the fixed 64-byte EEPROM preloader at 0xFC0.
 PRELOADER_EVEN_SUM = 0x5116
 PRELOADER_ODD_SUM = 0xC086
@@ -39,8 +59,13 @@ def checksum(loader, variant):
 def main():
     parser = argparse.ArgumentParser(description="Patch a loader for the fixed supervisor checksum")
     parser.add_argument("image", type=Path)
-    parser.add_argument("variant", choices=VARIANTS)
+    parser.add_argument("loader_version", nargs="?", default="50B_1MB")
     args = parser.parse_args()
+
+    checksum_version = args.loader_version
+    if checksum_version not in ORIGINAL_CHECKSUMS:
+        checksum_version = "50B_1MB"
+    variant = VERSION_VARIANTS.get(args.loader_version, "1MB")
 
     loader = bytearray(args.image.read_bytes())
     if len(loader) != LOADER_LEN:
@@ -48,20 +73,26 @@ def main():
     if loader[:8] != b"|load\xfd\xc4\x55":
         raise SystemExit(f"{args.image}: invalid loader signature")
 
-    # The last two loader words are padding and feed different accumulators.
+    # Preserve the original loader's final checksum word.  Since alternating
+    # words feed separate accumulators, the odd correction lives two words
+    # before it and the even correction immediately before it.
+    odd_patch = LOADER_LEN - 6
     even_patch = LOADER_LEN - 4
-    odd_patch = LOADER_LEN - 2
-    loader[even_patch:odd_patch + 2] = b"\0\0\0\0"
-    even, odd = checksum(loader, args.variant)
+    checksum_word = LOADER_LEN - 2
+    loader[odd_patch:checksum_word + 2] = b"\0\0\0\0\0\0"
+    loader[checksum_word:checksum_word + 2] = ORIGINAL_CHECKSUMS[checksum_version].to_bytes(2, "big")
+    even, odd = checksum(loader, variant)
     loader[even_patch:even_patch + 2] = (-even & 0xFFFF).to_bytes(2, "big")
     loader[odd_patch:odd_patch + 2] = (-odd & 0xFFFF).to_bytes(2, "big")
 
-    even, odd = checksum(loader, args.variant)
+    even, odd = checksum(loader, variant)
     if even != 0 or (odd & 0xFF) != 0:
         raise SystemExit(f"checksum patch failed: even={even:04x}, odd={odd:04x}")
 
     args.image.write_bytes(loader)
-    print(f"patched {args.image} for {args.variant}: even={even:04x}, odd={odd:04x}")
+    print(f"patched {args.image} for {args.loader_version}/{variant}: "
+          f"checksum={ORIGINAL_CHECKSUMS[checksum_version]:04x} ({checksum_version}), "
+          f"even={even:04x}, odd={odd:04x}")
 
 
 if __name__ == "__main__":

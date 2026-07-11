@@ -33,7 +33,7 @@ CPU=cpu32
 PREFIX=m68k-eabi-elf
 
 # Dont modify below this line (unless you know what youre doing).
-BUILDDIR=build
+BUILDDIR=build/$(VERSION)
 
 CC=$(PREFIX)-gcc
 LD=$(PREFIX)-ld
@@ -59,12 +59,12 @@ endif
 #   make VERSION=ROTE_512KB rom
 VERSION?=50B_1MB
 
-# Supervisor checksum variant. Defaults from the loader version where possible.
-SUPERVISOR_VARIANT?=$(if $(filter ROTE_512KB,$(VERSION)),512KB,$(if $(findstring 2MB,$(VERSION)),2MB,$(if $(findstring 1MB,$(VERSION)),1MB,1MB)))
-
 TEST_PORT?=/dev/ttyUSB0
 
 CFLAGS=-m$(CPU) -Wall -g -static -I${m68kbm_PATH}/include -I. -msoft-float -MMD -MP -Os -fno-omit-frame-pointer -falign-functions=4 -falign-jumps=4 -falign-loops=4 -DVERSION_$(VERSION)
+ifeq ($(SERIAL_DEBUG),1)
+CFLAGS+=-DSERIAL_DEBUG
+endif
 LFLAGS=--script=pcrel_application.ld -L${m68kbm_PATH}/libmetal -lmetal-$(CPU)
 
 OBJS=$(patsubst %.c,$(BUILDDIR)/%.c.o,$(SRCS))
@@ -115,8 +115,8 @@ srec: loader
 	$(OBJCOPY) -O srec loader loader.srec
 
 xc: loader
-	$(OBJCOPY) -O binary --gap-fill 0xff --pad-to 0xfc0 loader Loader.xc
-	python3 checksum.py Loader.xc $(SUPERVISOR_VARIANT)
+	$(OBJCOPY) -O binary --gap-fill 0x00 --pad-to 0xfc0 loader Loader.xc
+	python3 checksum.py Loader.xc $(VERSION)
 
 test: xc
 	python3 upload.py --port $(TEST_PORT) Loader.xc
